@@ -18,7 +18,14 @@ namespace Clio
 
         private static readonly JsonSerializerSettings SerializerSettings = new()
         {
-            TypeNameHandling = TypeNameHandling.Auto
+            TypeNameHandling = TypeNameHandling.Auto,
+            Error = (_, args) =>
+            {
+                if (args.ErrorContext.Error is JsonSerializationException)
+                {
+                    args.ErrorContext.Handled = true;
+                }
+            }
         };
 
         public CheckpointManager(IDataEncryptor dataEncryptor = null, ILogger logger = null)
@@ -45,7 +52,10 @@ namespace Clio
                 try
                 {
                     var checkpointData = saveAction();
-                    checkpoint.Data.Add(checkpointData);
+                    if (checkpointData != null)
+                    {
+                        checkpoint.Data.Add(checkpointData);
+                    }
                 }
                 catch (Exception e)
                 {
@@ -85,7 +95,7 @@ namespace Clio
                 }
                 else
                 {
-                    this.logger.LogError(null, $"No handler found for {type.FullName}");
+                    this.logger.LogWarning(null, $"No handler found for {type.FullName}");
                 }
             }
         }
