@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using Clio.Encryptors;
+using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using UnityEngine;
 
@@ -15,6 +16,7 @@ namespace Clio
         private readonly Dictionary<Type, Action> resetActions = new();
 
         private readonly IDataEncryptor dataEncryptor;
+        private readonly string checkpointPath;
 
         private static readonly JsonSerializerSettings SerializerSettings = new()
         {
@@ -28,8 +30,9 @@ namespace Clio
             }
         };
 
-        public CheckpointManager(IDataEncryptor dataEncryptor = null, ILogger logger = null)
+        public CheckpointManager(string checkpointPath, IDataEncryptor dataEncryptor = null, ILogger logger = null)
         {
+            this.checkpointPath = checkpointPath;
             this.logger = logger ?? Debug.unityLogger;
             this.dataEncryptor = dataEncryptor ?? new EmptyDataEncryptor();
         }
@@ -44,7 +47,7 @@ namespace Clio
             }
         }
 
-        public void Save()
+        public async UniTask SaveAsync()
         {
             var checkpoint = new Checkpoint();
             foreach (var (type, saveAction) in this.saveActions)
@@ -65,14 +68,37 @@ namespace Clio
             }
 
             var serializedObject = JsonConvert.SerializeObject(checkpoint, SerializerSettings);
-            var destination = Application.persistentDataPath + "/checkpoint.dat";
-            File.WriteAllText(destination, this.dataEncryptor.Encrypt(serializedObject));
+            try
+            {
+                await File.WriteAllTextAsync(this.checkpointPath, this.dataEncryptor.Encrypt(serializedObject));
+            }
+            catch (Exception e)
+            {
+                this.logger.LogException(e);
+                this.logger.LogError(null, "Failed to write checkpoint file");
+            }
+            this.logger.Log("Checkpoint saved successfully");
+        }
+
+        public async UniTask LoadAsync()
+        {
+            var checkpoint = await GetLatestCheckpoint();
+            ParseCheckpoint(checkpoint);
         }
 
         public void Load()
         {
-            var checkpoint = GetLatestCheckpoint();
+            var checkpoint = GetLatestCheckpoint(sync: true).GetAwaiter().GetResult();
+            ParseCheckpoint(checkpoint);
+        }
 
+        public void Reset()
+        {
+            ResetStateToDefault();
+        }
+
+        private void ParseCheckpoint(Checkpoint checkpoint)
+        {
             if (checkpoint == null)
             {
                 return;
@@ -100,15 +126,9 @@ namespace Clio
             }
         }
 
-        public void Reset()
+        private async UniTask<Checkpoint> GetLatestCheckpoint(bool sync = false)
         {
-            ResetStateToDefault();
-        }
-
-        private Checkpoint GetLatestCheckpoint()
-        {
-            var destination = Application.persistentDataPath + "/checkpoint.dat";
-            if (!File.Exists(destination))
+            if (!File.Exists(this.checkpointPath))
             {
                 this.logger.Log("No checkpoints found");
                 ResetStateToDefault();
@@ -117,8 +137,9 @@ namespace Clio
 
             try
             {
-                var savedData = this.dataEncryptor.Decrypt(File.ReadAllText(destination));
+                var savedData = this.dataEncryptor.Decrypt(sync ? File.ReadAllText(this.checkpointPath) : await File.ReadAllTextAsync(this.checkpointPath));
                 var checkpoint = JsonConvert.DeserializeObject<Checkpoint>(savedData, SerializerSettings);
+                this.logger.Log("Checkpoint loaded");
                 return checkpoint;
             }
             catch (Exception e)

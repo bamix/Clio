@@ -2,7 +2,7 @@
     "name": "Clio",
     "rootNamespace": "",
     "references": [
-        ""
+        "UniTask"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
